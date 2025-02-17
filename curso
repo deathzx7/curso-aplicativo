@@ -1,0 +1,221 @@
+import 'package:flutter/material.dart';
+import 'package:sqflite/sqflite.dart';
+import 'package:path/path.dart';
+
+void main() {
+  runApp(MyApp());
+}
+
+class MyApp extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'Gerenciador de Planetas',
+      theme: ThemeData(primarySwatch: Colors.blue),
+      home: PlanetListScreen(),
+    );
+  }
+}
+
+class Planet {
+  int? id;
+  String name;
+  String? nickname;
+  double distance;
+  double size;
+
+  Planet({this.id, required this.name, this.nickname, required this.distance, required this.size});
+
+  Map<String, dynamic> toMap() {
+    return {
+      'id': id,
+      'name': name,
+      'nickname': nickname,
+      'distance': distance,
+      'size': size,
+    };
+  }
+
+  factory Planet.fromMap(Map<String, dynamic> map) {
+    return Planet(
+      id: map['id'],
+      name: map['name'],
+      nickname: map['nickname'],
+      distance: map['distance'],
+      size: map['size'],
+    );
+  }
+}
+
+class DatabaseHelper {
+  static Database? _database;
+
+  Future<Database> get database async {
+    if (_database != null) return _database!;
+    _database = await _initDatabase();
+    return _database!;
+  }
+
+  Future<Database> _initDatabase() async {
+    String path = join(await getDatabasesPath(), 'planets.db');
+    return await openDatabase(
+      path,
+      version: 1,
+      onCreate: (db, version) async {
+        await db.execute('''
+          CREATE TABLE planets (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            nickname TEXT,
+            distance REAL NOT NULL,
+            size REAL NOT NULL
+          )
+        ''');
+      },
+    );
+  }
+
+  Future<void> insertPlanet(Planet planet) async {
+    final db = await database;
+    await db.insert('planets', planet.toMap(), conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  Future<List<Planet>> getPlanets() async {
+    final db = await database;
+    List<Map<String, dynamic>> maps = await db.query('planets');
+    return List.generate(maps.length, (i) => Planet.fromMap(maps[i]));
+  }
+
+  Future<void> updatePlanet(Planet planet) async {
+    final db = await database;
+    await db.update('planets', planet.toMap(), where: 'id = ?', whereArgs: [planet.id]);
+  }
+
+  Future<void> deletePlanet(int id) async {
+    final db = await database;
+    await db.delete('planets', where: 'id = ?', whereArgs: [id]);
+  }
+}
+
+class PlanetListScreen extends StatefulWidget {
+  @override
+  _PlanetListScreenState createState() => _PlanetListScreenState();
+}
+
+class _PlanetListScreenState extends State<PlanetListScreen> {
+  final DatabaseHelper dbHelper = DatabaseHelper();
+  List<Planet> planets = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPlanets();
+  }
+
+  Future<void> _loadPlanets() async {
+    final data = await dbHelper.getPlanets();
+    setState(() {
+      planets = data;
+    });
+  }
+
+  void _navigateToForm([Planet? planet]) async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (context) => PlanetFormScreen(dbHelper: dbHelper, planet: planet)),
+    );
+    _loadPlanets();
+  }
+
+  void _deletePlanet(int id) async {
+    await dbHelper.deletePlanet(id);
+    _loadPlanets();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text('Planetas')),
+      body: ListView.builder(
+        itemCount: planets.length,
+        itemBuilder: (context, index) {
+          final planet = planets[index];
+          return ListTile(
+            title: Text(planet.name),
+            subtitle: Text(planet.nickname ?? 'Sem apelido'),
+            trailing: IconButton(icon: Icon(Icons.delete), onPressed: () => _deletePlanet(planet.id!)),
+            onTap: () => _navigateToForm(planet),
+          );
+        },
+      ),
+      floatingActionButton: FloatingActionButton(
+        child: Icon(Icons.add),
+        onPressed: () => _navigateToForm(),
+      ),
+    );
+  }
+}
+
+class PlanetFormScreen extends StatefulWidget {
+  final DatabaseHelper dbHelper;
+  final Planet? planet;
+
+  PlanetFormScreen({required this.dbHelper, this.planet});
+
+  @override
+  _PlanetFormScreenState createState() => _PlanetFormScreenState();
+}
+
+class _PlanetFormScreenState extends State<PlanetFormScreen> {
+  final _formKey = GlobalKey<FormState>();
+  String name = '';
+  String? nickname;
+  double distance = 0.0;
+  double size = 0.0;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.planet != null) {
+      name = widget.planet!.name;
+      nickname = widget.planet!.nickname;
+      distance = widget.planet!.distance;
+      size = widget.planet!.size;
+    }
+  }
+
+  void _savePlanet() async {
+    if (_formKey.currentState!.validate()) {
+      _formKey.currentState!.save();
+      Planet planet = Planet(name: name, nickname: nickname, distance: distance, size: size, id: widget.planet?.id);
+      if (widget.planet == null) {
+        await widget.dbHelper.insertPlanet(planet);
+      } else {
+        await widget.dbHelper.updatePlanet(planet);
+      }
+      Navigator.pop(context);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text(widget.planet == null ? 'Adicionar Planeta' : 'Editar Planeta')),
+      body: Padding(
+        padding: EdgeInsets.all(16.0),
+        child: Form(
+          key: _formKey,
+          child: Column(
+            children: [
+              TextFormField(initialValue: name, onSaved: (val) => name = val!, decoration: InputDecoration(labelText: 'Nome')), 
+              TextFormField(initialValue: nickname, onSaved: (val) => nickname = val, decoration: InputDecoration(labelText: 'Apelido')),
+              TextFormField(initialValue: distance.toString(), onSaved: (val) => distance = double.parse(val!), decoration: InputDecoration(labelText: 'Distância')),
+              TextFormField(initialValue: size.toString(), onSaved: (val) => size = double.parse(val!), decoration: InputDecoration(labelText: 'Tamanho')),
+              ElevatedButton(onPressed: _savePlanet, child: Text('Salvar'))
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
